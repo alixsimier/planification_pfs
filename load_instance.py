@@ -7,44 +7,44 @@ def load_instance(path):
 
     # Format avec 'horizon', 'qualifications', 'staff', 'jobs'
     H = int(data["horizon"])
-    J = list(data["qualifications"])
+    Q = list(data["qualifications"])
 
     # Personnel / qualifications / vacations
-    I = []
+    S = []
     eta = defaultdict(lambda: defaultdict(int))   # η_{i,j}
     v   = defaultdict(lambda: defaultdict(int))   # v_{i,t} (1 si dispo)
     vacations_map = {}
 
     for s in data.get("staff", []):
         name = s["name"]
-        I.append(name)
+        S.append(name)
         quals = set(s.get("qualifications", []))
-        for j in J:
-            eta[name][j] = 1 if j in quals else 0
+        for q in Q:
+            eta[name][q] = 1 if q in quals else 0
         vacations_map[name] = set(int(d) for d in s.get("vacations", []))
 
-    for i in I:
+    for s in S:
         for t in range(1, H + 1):
-            v[i][t] = 0 if t in vacations_map.get(i, set()) else 1
+            v[s][t] = 0 if t in vacations_map.get(s, set()) else 1
 
     # Jobs -> projets
-    K = []
+    P = []
     mu   = defaultdict(lambda: defaultdict(int))  # μ_{k,j}
     gain = {}
     due  = {}
     pen  = {}
 
     for job in data.get("jobs", []):
-        k = job["name"]
-        K.append(k)
-        gain[k] = int(job.get("gain", 0))
-        due[k]  = int(job.get("due_date", H))
-        pen[k]  = int(job.get("daily_penalty", 0))
-        for j, req in job.get("working_days_per_qualification", {}).items():
-            mu[k][j] = int(req)
+        p = job["name"]
+        P.append(p)
+        gain[p] = int(job.get("gain", 0))
+        due[p]  = int(job.get("due_date", H))
+        pen[p]  = int(job.get("daily_penalty", 0))
+        for q, req in job.get("working_days_per_qualification", {}).items():
+            mu[p][q] = int(req)
 
-    return H, I, J, K, eta, v, mu, gain, due, pen
+    return H, S, Q, P, eta, v, mu, gain, due, pen
 
 if __name__ == "__main__":
-    H, I, J, K, eta, v, mu, gain, due, pen = load_instance("instances/toy_instance.json")
-    print(H, I, J, K, eta, v, mu, gain, due, pen)
+    H, S, Q, P, eta, v, mu, gain, due, pen = load_instance("instances/toy_instance.json")
+    print(H, S, Q, P, eta, v, mu, gain, due, pen)

@@ -1,10 +1,3 @@
-# Paramètres
-INSTANCE_PATH = "instances/toy_instance.json"
-OBJECTIVE     = "gain"                          # "gain" | "nb_projects" | "on_time"
-SOLVER_NAME   = "cbc"                          # ex: "glpk", "cbc", "gurobi", ...
-TEE           = True
-TIMELIMIT     = None
-
 # Imports 
 import json
 from collections import defaultdict
@@ -13,6 +6,13 @@ from pyomo.environ import (
     Objective, Constraint, maximize, value, SolverFactory
 )
 from load_instance import load_instance
+
+# Paramètres
+INSTANCE_PATH = "instances/toy_instance.json"
+OBJECTIVE     = "gain"
+SOLVER_NAME   = "glpk"
+TEE           = True
+TIMELIMIT     = None
 
 # Modèle 
 def build_model(H, S, Q, P, eta, v, mu, gain, due, pen, objective="gain"):
@@ -23,20 +23,19 @@ def build_model(H, S, Q, P, eta, v, mu, gain, due, pen, objective="gain"):
     m.P = Set(initialize=P, ordered=True)     # projets
     m.T = RangeSet(1, H)                      # horizon {1..H}
 
-    m.eta = Param(m.S, m.Q, initialize=lambda m,s,q: int(eta[s][q]) if q in eta[s] else 0,
-                  within=Binary, default=0)                                                 # η_{s,q}
-    m.v   = Param(m.S, m.T, initialize=lambda m,s,t: int(v[s][t]), within=Binary, default=0)  # v_{s,t}
-    m.mu  = Param(m.P, m.Q, initialize=lambda m,p,q: int(mu[p][q]) if q in mu[p] else 0,
-                  within=NonNegativeIntegers, default=0)                                     # μ_{p,q}
-    m.g   = Param(m.P, initialize=lambda m,p: int(gain[p]), within=NonNegativeIntegers, default=0)  # g_p
-    m.d   = Param(m.P, initialize=lambda m,p: max(1, min(H, int(due[p]))), within=NonNegativeIntegers) # d_p
-    m.p   = Param(m.P, initialize=lambda m,p_: int(pen[p_]), within=NonNegativeIntegers, default=100)   # p_p
+    m.eta = Param(m.S, m.Q, initialize=lambda m,s,q: int(eta[s][q]), within=Binary)                                                 # η_{s,q}
+    m.v   = Param(m.S, m.T, initialize=lambda m,s,t: int(v[s][t]), within=Binary)
+    m.mu  = Param(m.P, m.Q, initialize=lambda m,p,q: int(mu[p][q]), within=NonNegativeIntegers)                                     # μ_{p,q}
+    m.g   = Param(m.P, initialize=lambda m,p: int(gain[p]), within=NonNegativeIntegers)
+    m.d   = Param(m.P, initialize=lambda m,p: max(1, min(H, int(due[p]))), within=NonNegativeIntegers)
+    m.p   = Param(m.P, initialize=lambda m,p: int(pen[p]), within=NonNegativeIntegers)
 
-    # Variables (mêmes que le PDF)
-    m.lmbda = Var(m.S, m.Q, m.P, m.T, within=Binary, initialize=0)          # λ_{s,q,p,t}
-    m.z     = Var(m.P, m.T, within=Binary, initialize=0)                    # z_{p,t}
-    m.m     = Var(m.P, within=Binary, initialize=0)                         # m_p
-    m.tau   = Var(m.P, within=NonNegativeIntegers, initialize=0)            # τ_p (déclarée ; non utilisée si non contrainte)
+    # Variables 
+    m.lmbda = Var(m.S, m.Q, m.P, m.T, within=Binary)          # λ_{s,q,p,t}
+    m.z     = Var(m.P, m.T, within=Binary)                    # z_{p,t}
+    m.m     = Var(m.P, within=Binary)                         # m_p
+    m.u    = Var(m.P, m.T, within=Binary)
+    # m.tau   = Var(m.P, within=NonNegativeIntegers, initialize=0)
 
     # --- Contraintes du PDF ---
     # (i) Qualification : λ_{s,q,p,t} ≤ η_{s,q}
@@ -56,8 +55,13 @@ def build_model(H, S, Q, P, eta, v, mu, gain, due, pen, objective="gain"):
 
     # (iv) Réalisation cumulée (forme ≥ z_{p,t} - 1) : ∑_{s,τ≤t} λ_{s,q,p,τ} - μ_{p,q} ≥ z_{p,t} - 1
     def _cover_cum_rule(m, p, q, t):
-        return (sum(m.lmbda[s,q,p,tt] for s in m.S for tt in m.T if tt <= t) - m.mu[p,q]) >= (m.z[p,t] - 1)
+        return (sum(m.lmbda[s,q,p,tt] for s in m.S for tt in range(1,t+1)) - m.mu[p,q]) >= (m.z[p,t] - 1)
     m.CoverCum = Constraint(m.P, m.Q, m.T, rule=_cover_cum_rule)
+
+    # Linéarisation de u
+    m.line_u_rule1 = Constraint(m.P, m.T, rule=lambda m,p,t: m.u[p,t] <= m.m[p])
+    m.line_u_rule2 = Constraint(m.P, m.T, rule=lambda m,p,t: m.u[p,t] <= 1-m.z[p,t])
+    m.line_u_rule3 = Constraint(m.P, m.T, rule=lambda m,p,t: m.u[p,t] >= m.m[p]-m.z[p,t])
 
     # --- Objectifs ---
     if objective == "nb_projects":
@@ -66,8 +70,8 @@ def build_model(H, S, Q, P, eta, v, mu, gain, due, pen, objective="gain"):
         m.OBJ = Objective(expr=sum(m.z[p, m.d[p]] for p in m.P), sense=maximize)
     else:  # "gain" par défaut
         m.OBJ = Objective(
-            expr=sum(m.g[p]*m.m[p] for p in m.P)
-               - sum(m.p[p] * sum(1 - m.z[p,t] for t in m.T if t > m.d[p]) for p in m.P),
+            # expr=sum(m.g[p]*m.m[p] for p in m.P),
+            expr=sum(m.g[p]*m.m[p] for p in m.P) - sum(m.p[p] * sum(m.u[p,t] for t in m.T if t > m.d[p]) for p in m.P),
             sense=maximize
         )
 
@@ -90,16 +94,16 @@ def extract_solution(m):
     sol = {
         "objective": float(value(m.OBJ)),
         "projects_done": {p: int(value(m.m[p])) for p in m.P},
-        "on_time": {p: int(value(m.z[p, m.d[p]])) for p in m.P},
+        # "on_time": {p: int(value(m.z[p, m.d[p]])) for p in m.P},
         "completion_day": {},   # premier t tel que z_{p,t}=1 (si existe)
         "assignments": []       # tuples (s,q,p,t) où λ=1
     }
-    for p in m.P:
-        day = None
-        for t in m.T:
-            if value(m.z[p,t]) > 0.5:
-                day = int(t); break
-        sol["completion_day"][p] = day
+    # for p in m.P:
+    #     day = None
+    #     for t in m.T:
+    #         if value(m.z[p,t]) > 0.5:
+    #             day = int(t); break
+    #     sol["completion_day"][p] = day
 
     for s in m.S:
         for q in m.Q:
@@ -111,7 +115,9 @@ def extract_solution(m):
 
 # ---------- Exécution ----------
 if __name__ == "__main__":
+    from rich import print as rprint
     H, S, Q, P, eta, v, mu, gain, due, pen = load_instance(INSTANCE_PATH)
+    rprint(H, S, Q, P, eta, v, mu, gain, due, pen)
     m = build_model(H, S, Q, P, eta, v, mu, gain, due, pen, objective=OBJECTIVE)
     solve_model(m, solver_name=SOLVER_NAME, tee=TEE, timelimit=TIMELIMIT)
     sol = extract_solution(m)
@@ -119,6 +125,6 @@ if __name__ == "__main__":
     print("\n=== Résultat (notations S/Q/P conformes à load_instance) ===")
     print(f"Objectif = {sol['objective']:.3f}")
     print("Projets réalisés (m_p) :", sol["projects_done"])
-    print("À l'heure (z_{p,d_p})  :", sol["on_time"])
+    # print("À l'heure (z_{p,d_p})  :", sol["on_time"])
     print("Jour de complétion (1er t avec z=1) :", sol["completion_day"])
     print(f"Affectations λ (s,q,p,t) — {len(sol['assignments'])} entrées")

@@ -1,8 +1,8 @@
 # Paramètres
 
 INSTANCE_PATH = "instances/medium_instance.json"  
-OBJECTIVE     = "profit"                 # "profit" | "nb_projects" | "on_time" | "combo"
-W_PROFIT      = 1.0                      # poids (si OBJECTIVE="combo")
+OBJECTIVE     = "profit"                            # "profit" | "nb_projects" | "on_time" | "combo"
+W_PROFIT      = 1.0                                  # poids (si OBJECTIVE="combo")
 W_NPROJ       = 0.0
 W_ONTIME      = 0.0
 SOLVER_NAME   = "cbc"
@@ -18,6 +18,7 @@ from pyomo.environ import (
     ConcreteModel, Set, RangeSet, Param, Var, Binary, NonNegativeIntegers,
     Objective, Constraint, maximize, value, SolverFactory
 )
+from load_instance import load_instance
 
 
 

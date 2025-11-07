@@ -1,76 +1,28 @@
-# planif_pyomo_nocli.py
-# -*- coding: utf-8 -*-
-"""
-Modèle Pyomo pour la planification personnel/projets (compétences, échéances, pénalités).
-Lecture directe de ton format d'instances (horizon, qualifications, staff[], jobs[]).
-Aucun argument en ligne de commande : tout est codé en dur ci-dessous.
-"""
+# Paramètres
 
-# ====== PARAMÈTRES CODÉS EN DUR ======
-INSTANCE_PATH = "medium_instance.json"   # <-- change si besoin
+INSTANCE_PATH = "instances/medium_instance.json"  
 OBJECTIVE     = "profit"                 # "profit" | "nb_projects" | "on_time" | "combo"
 W_PROFIT      = 1.0                      # poids (si OBJECTIVE="combo")
 W_NPROJ       = 0.0
 W_ONTIME      = 0.0
-SOLVER_NAME   = "glpk"                   # "glpk", "cbc", "gurobi", "cplex", ...
-TEE          = True                      # affiche le log du solveur
-TIMELIMIT     = None                     # ex: 60 (secondes) pour GLPK: option tmlim
+SOLVER_NAME   = "cbc"
+TEE          = True
+TIMELIMIT     = None
 
-# ====== CODE ======
+
+# Imports nécessaires
+
 import json
 from collections import defaultdict
-
 from pyomo.environ import (
     ConcreteModel, Set, RangeSet, Param, Var, Binary, NonNegativeIntegers,
     Objective, Constraint, maximize, value, SolverFactory
 )
 
-# ---------- Chargement d'instance (format ORRA) ----------
-def load_instance(path):
-    with open(path, "r", encoding="utf-8") as f:
-        data = json.load(f)
 
-    # Format avec 'horizon', 'qualifications', 'staff', 'jobs'
-    H = int(data["horizon"])
-    J = list(data["qualifications"])
 
-    # Personnel / qualifications / vacations
-    I = []
-    eta = defaultdict(lambda: defaultdict(int))   # η_{i,j}
-    v   = defaultdict(lambda: defaultdict(int))   # v_{i,t} (1 si dispo)
-    vacations_map = {}
+# Modèle 
 
-    for s in data.get("staff", []):
-        name = s["name"]
-        I.append(name)
-        quals = set(s.get("qualifications", []))
-        for j in J:
-            eta[name][j] = 1 if j in quals else 0
-        vacations_map[name] = set(int(d) for d in s.get("vacations", []))
-
-    for i in I:
-        for t in range(1, H + 1):
-            v[i][t] = 0 if t in vacations_map.get(i, set()) else 1
-
-    # Jobs -> projets
-    K = []
-    mu   = defaultdict(lambda: defaultdict(int))  # μ_{k,j}
-    gain = {}
-    due  = {}
-    pen  = {}
-
-    for job in data.get("jobs", []):
-        k = job["name"]
-        K.append(k)
-        gain[k] = int(job.get("gain", 0))
-        due[k]  = int(job.get("due_date", H))
-        pen[k]  = int(job.get("daily_penalty", 0))
-        for j, req in job.get("working_days_per_qualification", {}).items():
-            mu[k][j] = int(req)
-
-    return H, I, J, K, eta, v, mu, gain, due, pen
-
-# ---------- Modèle Pyomo ----------
 def build_model(H, I, J, K, eta, v, mu, gain, due, pen,
                 objective="profit", w_profit=1.0, w_nproj=0.0, w_ontime=0.0):
     m = ConcreteModel("StaffingProjects")

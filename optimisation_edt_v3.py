@@ -1,7 +1,7 @@
 # Paramètres
-INSTANCE_PATH = "instances/toy_instance.json"
+INSTANCE_PATH = "instances/medium_instance.json"
 OBJECTIVE     = "gain"                          # "gain" | "nb_projects" | "on_time"
-SOLVER_NAME   = "cbc"                          # ex: "glpk", "cbc", "gurobi", ...
+SOLVER_NAME   = "glpk"                          # ex: "glpk", "cbc", "gurobi", ...
 TEE           = True
 TIMELIMIT     = None
 

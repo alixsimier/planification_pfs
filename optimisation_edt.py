@@ -3,8 +3,8 @@
 """
 Modèle Pyomo pour la planification personnel/projets avec compétences et échéances.
 
-Référence de modélisation (sets/vars/constraints/objets) : pfs_planification.pdf.  # voir conversation
-Contexte/format d'instances JSON (toy/medium/large) : Projet_fin_sequence_ORRA_2025_26-1.pdf.  # voir conversation
+Référence de modélisation (sets/vars/constraints/objets) : pfs_planification.pdf.
+Contexte/format d'instances JSON (toy/medium/large) : Projet_fin_sequence_ORRA_2025_26-1.pdf.
 
 JSON attendu (exemple minimal) :
 {

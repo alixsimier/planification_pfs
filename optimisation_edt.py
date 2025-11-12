@@ -1,12 +1,24 @@
 from ast import Expression
 from pyomo.environ import (
-ConcreteModel, Set, RangeSet, Param, Var, Binary, NonNegativeIntegers,
-Objective, Constraint, maximize, value, SolverFactory, Expression
+    ConcreteModel,
+    Set,
+    Param,
+    Var,
+    Constraint,
+    Objective,
+    minimize,
+    value,
+    RangeSet,
+    Binary,
+    NonNegativeIntegers,
+    maximize,
+    ConstraintList,
+    SolverFactory
 )
 from load_instance import load_instance
 import matplotlib.pyplot as plt
 from pyomo.environ import Param
-
+from rich import print as rprint
 
 def solve_model(CONFIG):
     H, S, Q, P, eta, v, mu, gain, due, pen = load_instance(CONFIG["instance_path"])
@@ -64,53 +76,121 @@ def solve_model(CONFIG):
         return m.r[p] >= m.f[p] - due[p]
     m.retard = Constraint(m.P, rule=projet_retard)
 
+    def durée_pos(m, p):
+        return m.d[p] <= m.f[p]
+    m.durée_pos = Constraint(m.P, rule=durée_pos)
+    
     # Date de début de projet
     def date_début(m, s, p, q, t):
         if (s, q, p, t) not in m.SQPT:
             return Constraint.Skip
-        return m.d[p] <= t +(H-t)*(1- m.lmbda[s, q, p, t])
+        return m.d[p] <= t + ( max(m.T)-t)*(1- m.lmbda[s, q, p, t])
     m.date_début = Constraint(m.S, m.P, m.Q, m.T, rule=date_début)
 
     ### OBJECTIF
 
     # profit
-    expr_profit = sum(gain[p] * m.m[p] - pen[p] * m.r[p] for p in m.P)
+    m.expr_profit = sum(gain[p] * m.m[p] - pen[p] * m.r[p] for p in m.P)
     # m.OBJ = Objective(expr=expr_profit, sense=maximize)
 
     # projets faits
-    expr_projets = sum(m.m[p] for p in m.P)
+    m.expr_projets = sum(m.m[p] for p in m.P)
     # m.OBJ = Objective(expr=expr_projets, sense=maximize)
 
     # durée projets
-    expr_durée = -sum(m.f[p] - m.d[p] for p in m.P)
+    m.expr_duree = sum(m.f[p] - m.d[p] for p in m.P)
     # m.OBJ = Objective(expr=expr_projets, sense=maximize)
 
     # compacité du nombre de projets par personnes
-    expr_compacité = -sum(m.t[s,p] for s in m.S for p in m.P) / len(m.S)
+    m.expr_compacite = sum(m.t[s,p] for s in m.S for p in m.P) / len(m.S)
 
 
-    # if CONFIG["objective"] == "projets":
-    #     m.OBJ = Objective(expr=expr_projets, sense=maximize)
-    if CONFIG["objective"] == "durée":
-        m.OBJ = Objective(expr=expr_durée, sense=maximize)
-    if CONFIG["objective"] == "profit":
-        m.OBJ = Objective(expr=expr_profit, sense=maximize)
-    if CONFIG["objective"] == "compacité":
-        m.OBJ = Objective(expr=expr_compacité, sense=maximize)
-   
+    if CONFIG["obj_principale"] == "durée":
+        m.OBJ = Objective(expr=m.expr_duree, sense=minimize)
+    elif CONFIG["obj_principale"] == "profit":
+        m.OBJ = Objective(expr=m.expr_profit, sense=maximize)
+    elif CONFIG["obj_principale"] == "projets":
+        m.OBJ = Objective(expr=m.expr_projets, sense=maximize)
+    elif CONFIG["obj_principale"] == "compacité":
+        m.OBJ = Objective(expr=m.expr_compacite, sense=minimize)
+
+    m.epsilon_constraints = ConstraintList()
+
+    for obje, eps in CONFIG["obj_secondaires"].items():
+        if obje == "durée":
+            m.epsilon_constraints.add(expr=m.expr_duree <= eps)
+        elif obje == "profit":
+            m.epsilon_constraints.add(expr=m.expr_profit >= eps)
+        elif obje == "projets":
+            m.epsilon_constraints.add(expr=m.expr_projets >= eps)
+        elif obje == "compacité":
+            m.epsilon_constraints.add(expr=m.expr_compacite <= eps)
+
+    # Résolution
     opt = SolverFactory(CONFIG["solver"])
-    results = opt.solve(m, tee=True)
+    results = opt.solve(m, tee=CONFIG["tee"])
     return m, results
 
-if __name__ == "__main__":
+def pareto_profit_compacite(CONFIG):
+    H, S, Q, P, eta, v, mu, gain, due, pen = load_instance(CONFIG["instance_path"])
     
+    pareto_points = []
+
+    for eps in range(len(Q), -1, -1):
+        config_eps = CONFIG.copy()
+        rprint(eps)
+        config_eps["obj_secondaires"] = {"compacité": eps}
+
+        m, results = solve_model(config_eps)
+
+        print(results)
+
+        # Calculer profit et compacité pour ce modèle
+        profit = value(m.OBJ)
+        compacite = value(m.expr_compacite)
+
+        rprint(profit)
+        rprint(compacite)
+        pareto_points.append((profit, compacite))
+
+    # Tracer la surface de Pareto
+    profits, compacites = zip(*pareto_points)
+    plt.figure(figsize=(7,5))
+    plt.plot(compacites, profits, marker='o')
+    plt.xlabel("Compacité (nombre de projets moyen par personne)")
+    plt.ylabel("Profit")
+    plt.title("Front de Pareto: Profit vs Compacité")
+    plt.grid(True)
+    plt.show()
+
+    return pareto_points
+
+
+if __name__ == "__main__":
     CONFIG = {
         "instance_path" : "instances/medium_instance.json",
-        "objective":"projets", # profit, projets, multi
-        "w_profit": 0.8, # si multi objectif
-        "max_projet_par_pers": 5, # si multi objectif
+        "obj_principale" : "durée", 
         "solver":"gurobi",
-        "tee": True
+        "tee": False,  # True si vous voulez voir le log solver
+        "obj_secondaires" : {"profit" : 40}  # sera mis à jour dans la boucle epsilon
     }
-    results = solve_model(CONFIG)
-    print(results)
+    m, res = solve_model(CONFIG)
+    print(value(m.expr_profit))
+    print(value(m.expr_duree))
+    print(value(m.expr_projets))
+    print(value(m.expr_compacite))
+
+    # points = pareto_profit_compacite(CONFIG)
+
+
+# if __name__ == "__main__":
+    
+#     CONFIG = {
+#         "instance_path" : "instances/medium_instance.json",
+#         "obj_principale" : "profit", 
+#         "solver":"cbc",
+#         "tee": True,
+#         "obj_secondaires" : {"durée": 30, "compacité": 15}
+#     }
+#     results = solve_model(CONFIG)
+#     print(results)

@@ -3,6 +3,8 @@ import random
 import string
 from rich import print as rprint
 from faker import Faker
+import json
+import os
 
 fake = Faker()
 
@@ -80,11 +82,38 @@ def new_job(data, changement=2):
     data["jobs"]=jobs
     return data
 
+def generate_instance(input_path="instances/medium_instance.json", 
+                      output_path="instances/generated_instance.json", 
+                      changement=2):
+    data = load_instance(input_path)
+    data = new_horizon(data, changement)
+    data = new_qualifications(data, changement)
+    data = new_staff(data, changement)
+    data = new_job(data, changement)
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=4, ensure_ascii=False)
+    print(f"Nouvelle instance générée et sauvegardée dans {output_path}")
+    return data
+
+def generate_multiple_instances(n=100, 
+                                input_path="instances/medium_instance.json", 
+                                output_dir="instances/generated_instances", 
+                                changement=2):
+    os.makedirs(output_dir, exist_ok=True)
+    for i in range(1, n+1):
+        output_path = os.path.join(output_dir, f"instance_{i}.json")
+        generate_instance(input_path=input_path, 
+                          output_path=output_path, 
+                          changement=changement)
+    print(f"{n} instances générées dans le dossier {output_dir}")
 
 if __name__ == "__main__":
-    data = load_instance()
-    data = new_horizon(data)
-    data = new_qualifications(data)
-    data = new_staff(data)
-    data = new_job(data)
-    rprint(data)
+    generate_multiple_instances(input_path="instances/generation_instance.json")
+
+    # data = load_instance()
+    # data = new_horizon(data)
+    # data = new_qualifications(data)
+    # data = new_staff(data)
+    # data = new_job(data)
+    # rprint(data)

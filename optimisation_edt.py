@@ -16,6 +16,9 @@ from pyomo.environ import (
     SolverFactory, 
     value
 )
+import copy
+import os
+import time
 from load_instance import load_instance
 import matplotlib.pyplot as plt
 from pyomo.environ import Param
@@ -167,12 +170,19 @@ def calculs(m, results):
                 temps_par_projet[p]['t_min'] = min(temps_par_projet[p]['t_min'], t)
                 temps_par_projet[p]['t_max'] = max(temps_par_projet[p]['t_max'], t)
     durees = []
+    projets_faits_details = {}
     for p in temps_par_projet:
         t_min = temps_par_projet[p]['t_min']
         t_max = temps_par_projet[p]['t_max']
         duree = t_max - t_min + 1
-        temps_par_projet[p] = duree
+        temps_par_projet[p]['durée'] = duree
         durees.append(duree)
+        projets_faits_details[p] = {
+            't_min': t_min,
+            't_max': t_max,
+            'durée': duree,
+            'due_date': value(m.due[p])  # m.due[p] dépend seulement de p
+        }
     duree_moyenne = sum(durees) / len(durees) if durees else 0
     projet = sum([m.m[p].value for p in m.P])
     retard = 0
@@ -180,7 +190,8 @@ def calculs(m, results):
         if value(m.m[p]) > 0:
             if value(m.f[p]) > m.due[p]:
                 retard += 1
-    return value(m.expr_profit), nb_projet_moyen, duree_moyenne, projet, retard
+    rprint(temps_par_projet)
+    return value(m.expr_profit), nb_projet_moyen, duree_moyenne, projet, retard, projets_faits_details
 
 # def debug_dates(m, H):
 #     print("=== DEBUG DéBUT / FIN ===")
@@ -195,30 +206,31 @@ def calculs(m, results):
 #                 rhs = t + (H - t) * (1 - lam)
 #                 print(f"  s={s}, q={q}, t={t}, λ={lam:.3f}  -->  d[p]={lhs}  <= RHS={rhs}")
 
-def pareto2(CONFIG, obj_princ, contr1, objectif, contrainte1):
+def pareto2(CONFIG, obj_princ, contr_name, objectif, contrainte1):
     H, S, Q, P, eta, v, mu, gain, due, pen = load_instance(CONFIG["instance_path"])
     pareto_points = []
-    CONFIG['obj_principale'] = obj_princ
-    if contr1 == "duree" or contr1 == "retard":
-        i, j, k = H, -1, -1
-    if contr1 == "personne" :
-        i, j, k = len(P), -1, -1
-    if contr1 == "projet" :
-        i, j, k = 1, len(P), -1
-    for eps in range(i,j,k):
-        config_eps = CONFIG.copy()
-        config_eps["obj_secondaires"][contr1] = eps
+
+    # Définir les valeurs possibles pour la contrainte secondaire
+    if contr_name in ["duree", "retard"]:
+        eps_values = list(range(H, 0, -1))
+    elif contr_name == "personne":
+        eps_values = list(range(len(P), 0, -1))
+    elif contr_name == "projet":
+        eps_values = list(range(1, len(P)+1))
+    else:
+        raise ValueError(f"Contrôle secondaire inconnu : {contr_name}")
+
+    for eps in eps_values:
+        config_eps = copy.deepcopy(CONFIG)
+        config_eps["obj_secondaires"] = {contr_name: eps}
+
         m, results = solve_model(config_eps)
+
         if str(results.solver.termination_condition) != "optimal":
             rprint(f"Pas de solution pour contrainte : {contrainte1}={eps}")
             continue
-        profit, personne, duree, projet, retard = calculs(m, results)
-        rprint("Profits réalisés ", profit)
-        rprint("Nombre moyen de projets par personne ", personne)
-        rprint("Durée moyenne des projets ", duree)
-        rprint("Nombre de projets réalisés ", projet)
-        rprint("Nombre de projets en retard ", retard)
 
+        profit, personne, duree, projet, retard, _ = calculs(m, results)
         valeurs = {
             "profit": profit,
             "personne": personne,
@@ -227,30 +239,23 @@ def pareto2(CONFIG, obj_princ, contr1, objectif, contrainte1):
             "retard": retard
         }
 
-        obj_princ = CONFIG["obj_principale"]
-        contr = CONFIG["obj_secondaires"][contr1]
-
         pareto_points.append((
             valeurs.get(obj_princ, 0),
-            valeurs.get(contr, 0),
+            valeurs.get(contr_name, 0)
         ))
 
     if not pareto_points:
         rprint("Aucun point de Pareto valide trouvé.")
         return []
 
-    # Décomposer les points
-    princ, contr1 = zip(*pareto_points)
-
-    # Tracer la surface 3D
-    fig = plt.figure(figsize=(10,7))
-    ax = fig.add_subplot(111, projection='3d')
-
-    sc = ax.scatter(princ, contr1, c=princ, cmap='viridis', marker='o')
-    ax.set_xlabel(obj_princ)
-    ax.set_ylabel(contrainte1)
-    ax.set_title(f"Front de Pareto: {obj_princ} vs {contrainte1}")
-    plt.colorbar(sc, label={obj_princ})
+    # Tracé 2D
+    princ_vals, contr_vals = zip(*pareto_points)
+    plt.figure(figsize=(8,6))
+    sc = plt.plot(contr_vals, princ_vals, '-o', color='blue', markersize=6, linewidth=1.5)
+    plt.ylabel(objectif)
+    plt.xlabel(contrainte1)
+    plt.title(f"Front de Pareto: {objectif} vs {contrainte1}")
+    plt.grid(True)
     plt.show()
 
     return pareto_points
@@ -281,7 +286,7 @@ def pareto3(CONFIG, obj_princ, contrainte1, contrainte2):
             if str(results.solver.termination_condition) != "optimal":
                 rprint(f"Pas de solution pour contrainte : {contrainte1}={eps}, et contrainte : {contrainte2}={e}")
                 continue
-            profit, personne, duree, projet, retard = calculs(m, results)
+            profit, personne, duree, projet, retard, p = calculs(m, results)
             rprint("Profits réalisés ", profit)
             rprint("Nombre moyen de projets par personne ", personne)
             rprint("Durée moyenne des projets ", duree)
@@ -389,22 +394,51 @@ def pareto_surface_3D(points, objectif, contrainte1, contrainte2):
 #             print(p, m.f[p].value, m.d[p].value)
 #     debug_dates(m, 22)
 
+def run_benchmarks_folder(folder_path, CONFIG_template):
+    all_times = [] 
+    for file_name in os.listdir(folder_path):
+        if not file_name.endswith(".json"):
+            continue
+        instance_path = os.path.join(folder_path, file_name)
+        print(f"\n=== Running benchmark for {file_name} ===")
+        CONFIG = CONFIG_template.copy()
+        CONFIG["instance_path"] = instance_path
+        start_time = time.time()
+        try :
+            m, results = solve_model(CONFIG)
+            end_time = time.time()
+            elapsed = end_time - start_time
+            all_times.append(elapsed)
+            print(f"Time for {file_name}: {elapsed:.2f} seconds")
+        except Exception as e:
+            print(f"Exception as {e}")
+    plt.figure(figsize=(6,4))
+    plt.hist(all_times, color='skyblue', bins=30, edgecolor='black')
+    plt.title(f"Histogramme des temps de calcul")
+    plt.ylabel("Nombre d'instances")
+    plt.xlabel("Temps en secondes")
+    plt.grid(axis='y')
+    plt.show()
+    
+    return all_times
+
 if __name__ == "__main__":
     
     CONFIG = {
-        "instance_path" : "instances/toy_instance_v.json",
+        "instance_path" : "instances/generation_instance.json",
         "obj_principale" : "profit", 
         "solver":"gurobi",
         "tee": False,
         "obj_secondaires" : {}
     }
-    m, res = solve_model(CONFIG)
-    c = calculs(m, res)
-    rprint(c)
-    obj_princ = "profit"
-    contrainte1 = "duree"
-    contrainte2 = "personne"
-    pareto_points = pareto2(CONFIG, obj_princ, "duree", "Profit", "Durée moyenne d'un projet")
-    # pareto_points = pareto3(CONFIG, obj_princ, contrainte1, contrainte2)
-    # print(pareto_points)
-    # pareto_surface_3D(pareto_points, "Profit", "Durée moyenne d'un projet", "Nombre moyen de projets par personne")
+    # res = run_benchmarks_folder("instances/generated_instances", CONFIG)
+    # m, res = solve_model(CONFIG)
+    # c = calculs(m, res)
+    # rprint(c)
+    # # obj_princ = "profit"
+    # # contrainte1 = "duree"
+    # # contrainte2 = "personne"
+    pareto_points = pareto2(CONFIG, "profit", "personne", "Profit", "Nombre moyen de projets par personne")
+    # # pareto_points = pareto3(CONFIG, obj_princ, contrainte1, contrainte2)
+    # # print(pareto_points)
+    # # pareto_surface_3D(pareto_points, "Profit", "Durée moyenne d'un projet", "Nombre moyen de projets par personne")

@@ -4,8 +4,8 @@ import matplotlib.pyplot as plt
 from pyomo.environ import value
 from optimisation_edt import solve_model, calculs
 import numpy as np
-import matplotlib.patches as mpatches
-import matplotlib.colors as mcolors
+
+from visualisation import plot_planning_complet
 
 st.title("Staffing Projects Interactive Dashboard")
 
@@ -57,47 +57,31 @@ if instance_file is not None and st.button("Lancer la résolution"):
 
         # --- Affichage des valeurs des objectifs ---
         st.subheader("Valeurs des objectifs")
-        prof, personne, duree, projet, retard = calculs(m, results)
+        prof, personne, duree, projet, retard, projets_faits_details = calculs(m, results)
         st.write(f"Profit total réalisé: {prof}")
         st.write(f"Nombre moyen de projet par personne : {personne}")
         st.write(f"Durée moyenne d'un projet : {duree}")
         st.write(f"Nombre de projets réalisés : {projet}")
-        st.write(f"Nombre de projets rendus en retard : {projet}")
+        st.write(f"Nombre de projets rendus en retard : {retard}")
 
         # --- Préparation du planning pour le graphique ---
         S, P, T = list(m.S), list(m.P), list(m.T)
         projets_list = list(P)
         projet_to_idx = {p: i for i, p in enumerate(projets_list)}
 
-        planning_data_num = -1 * np.ones((len(S), len(T)))  # -1 = vacances / aucun projet
+        planning_data_num = -1 * np.ones((len(S), len(T)), dtype=int)  # -1 = vacances / aucun projet
+
         for i, s in enumerate(S):
-            for j, t in enumerate(T):
-                for q in m.Q:
-                    for p in P:
-                        if (s, q, p, t) in m.SQPT and value(m.lmbda[s, q, p, t]) > 0.5:
-                            planning_data_num[i, j] = projet_to_idx[p]
-
-        cmap = plt.get_cmap("tab20", len(projets_list))
-        new_colors = np.vstack(([1, 1, 1, 1], cmap(np.arange(len(projets_list)))))
-        new_cmap = mcolors.ListedColormap(new_colors)
-        bounds = np.arange(-1, len(projets_list) + 1)
-        norm = mcolors.BoundaryNorm(bounds, new_cmap.N)
-
-        fig, ax = plt.subplots(figsize=(10, 5))
-        cax = ax.imshow(planning_data_num, aspect='auto', cmap=new_cmap, norm=norm, origin='lower')
-
-        ax.set_xlabel("Jour")
-        ax.set_ylabel("Personne")
-        ax.set_yticks(range(len(S)))
-        ax.set_yticklabels(S)
-        ax.set_title("Planning des projets par personne")
-
-        # Légende manuelle
-        patches = [mpatches.Patch(color=new_cmap(i + 1), label=p) for i, p in enumerate(projets_list)]
-        patches.insert(0, mpatches.Patch(color="white", label="Vacances"))
-        ax.legend(handles=patches, bbox_to_anchor=(1.05, 1), loc='upper left', title="Projets")
-
-        st.pyplot(fig)
+            for j,t in enumerate(T):
+                projets_actifs = [
+                    p for q in m.Q for p in P
+                    if (s, q, p, t) in m.SQPT and value(m.lmbda[s, q, p, t]) > 0.5
+                ]
+                if projets_actifs:
+                    if len(projets_actifs)>1:
+                        print("ERREUR")
+                    planning_data_num[i, j] = projet_to_idx[projets_actifs[0]]
+        plot_planning_complet(projets_faits_details, planning_data_num, S)
     
     else:
         st.write(f"Aucune solution n'existe. Le problème est {results.solver.termination_condition}.")

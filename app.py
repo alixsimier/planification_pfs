@@ -57,11 +57,12 @@ if instance_file is not None and st.button("Lancer la résolution"):
 
         # --- Affichage des valeurs des objectifs ---
         st.subheader("Valeurs des objectifs")
-        prof, personne, duree, projet = calculs(m, results)
+        prof, personne, duree, projet, retard = calculs(m, results)
         st.write(f"Profit total réalisé: {prof}")
         st.write(f"Nombre moyen de projet par personne : {personne}")
         st.write(f"Durée moyenne d'un projet : {duree}")
         st.write(f"Nombre de projets réalisés : {projet}")
+        st.write(f"Nombre de projets rendus en retard : {projet}")
 
         # --- Préparation du planning pour le graphique ---
         S, P, T = list(m.S), list(m.P), list(m.T)

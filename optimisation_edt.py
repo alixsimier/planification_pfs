@@ -149,6 +149,7 @@ def solve_model(CONFIG):
 
     ### RESOLUTION
     opt = SolverFactory(CONFIG["solver"])
+    opt.options["TimeLimit"] = 10
     results = opt.solve(m, tee=CONFIG["tee"])
     return m, results
 
@@ -265,34 +266,32 @@ def pareto3(CONFIG, obj_princ, contrainte1, contrainte2):
     H, S, Q, P, eta, v, mu, gain, due, pen = load_instance(CONFIG["instance_path"])
     pareto_points = []
     CONFIG['obj_principale'] = obj_princ
-    if contrainte1 == "duree" or contrainte1 == "retard":
-        i, j, k = H, -1, -1
-    if contrainte1 == "personne" :
-        i, j, k = len(P), -1, -1
-    if contrainte1 == "projet" :
-        i, j, k = 1, len(P), -1
-    if contrainte2 == "duree" or contrainte2 == "retard":
-        l, o, n = H, -1, -1
-    if contrainte2 == "personne" :
-        l, o, n = len(P), -1, -1
-    if contrainte2 == "projet" :
-        l, o, n = 1, len(P), -1
-    for eps in range(i,j,k):
-        config_eps = CONFIG.copy()
-        config_eps["obj_secondaires"][contrainte1] = eps
-        for e in range(l,o,n):
-            config_eps["obj_secondaires"][contrainte2] = e
-            m, results = solve_model(config_eps)
-            if str(results.solver.termination_condition) != "optimal":
-                rprint(f"Pas de solution pour contrainte : {contrainte1}={eps}, et contrainte : {contrainte2}={e}")
-                continue
-            profit, personne, duree, projet, retard, p = calculs(m, results)
-            rprint("Profits réalisés ", profit)
-            rprint("Nombre moyen de projets par personne ", personne)
-            rprint("Durée moyenne des projets ", duree)
-            rprint("Nombre de projets réalisés ", projet)
-            rprint("Nombre de projets en retard ", retard)
 
+    # Définir les valeurs possibles pour chaque contrainte
+    def eps_values(contr, H, P):
+        if contr in ["duree", "retard"]:
+            return list(range(H, 0, -1))
+        elif contr == "personne":
+            return list(range(len(P), 0, -1))
+        elif contr == "projet":
+            return list(range(1, len(P)+1))
+        else:
+            raise ValueError(f"Contrôle secondaire inconnu : {contr}")
+
+    eps1_list = eps_values(contrainte1, H, P)
+    eps2_list = eps_values(contrainte2, H, P)
+
+    for eps1 in eps1_list:
+        for eps2 in eps2_list:
+            config_eps = copy.deepcopy(CONFIG)
+            config_eps["obj_secondaires"] = {contrainte1: eps1, contrainte2: eps2}
+            m, results = solve_model(config_eps)
+
+            if str(results.solver.termination_condition) != "optimal":
+                rprint(f"Pas de solution pour {contrainte1}={eps1}, {contrainte2}={eps2}")
+                continue
+
+            profit, personne, duree, projet, retard, _ = calculs(m, results)
             valeurs = {
                 "profit": profit,
                 "personne": personne,
@@ -300,9 +299,6 @@ def pareto3(CONFIG, obj_princ, contrainte1, contrainte2):
                 "projet": projet,
                 "retard": retard
             }
-
-            obj_princ = CONFIG["obj_principale"]
-            contrainte1, contrainte2 = list(CONFIG["obj_secondaires"].keys())[:2]
 
             pareto_points.append((
                 valeurs.get(obj_princ, 0),
@@ -314,24 +310,24 @@ def pareto3(CONFIG, obj_princ, contrainte1, contrainte2):
         rprint("Aucun point de Pareto valide trouvé.")
         return []
 
-    # Décomposer les points
-    princ, contr1, contr2 = zip(*pareto_points)
-
-    # Tracer la surface 3D
+    # Tracer les points 3D
+    princ, contr1_vals, contr2_vals = zip(*pareto_points)
     fig = plt.figure(figsize=(10,7))
     ax = fig.add_subplot(111, projection='3d')
-
-    sc = ax.scatter(princ, contr1, contr2, c=princ, cmap='viridis', marker='o')
+    ax.scatter(princ, contr1_vals, contr2_vals, c=princ, cmap='viridis', marker='o')
     ax.set_xlabel(obj_princ)
     ax.set_ylabel(contrainte1)
     ax.set_zlabel(contrainte2)
-    ax.set_title(f"Surface de Pareto: {obj_princ} vs {contrainte1} vs {contrainte2}")
-    plt.colorbar(sc, label={obj_princ})
+    ax.set_title(f"Points de Pareto: {obj_princ} vs {contrainte1} vs {contrainte2}")
     plt.show()
 
     return pareto_points
 
 def pareto_surface_3D(points, objectif, contrainte1, contrainte2):
+    if not points:
+        rprint("Aucun point à afficher pour la surface.")
+        return
+
     obj_princ, contr1_vals, contr2_vals = zip(*points)
     obj_princ = np.array(obj_princ)
     contr1_vals = np.array(contr1_vals)
@@ -339,36 +335,24 @@ def pareto_surface_3D(points, objectif, contrainte1, contrainte2):
 
     fig = plt.figure(figsize=(10,7))
     ax = fig.add_subplot(111, projection='3d')
-    try :
-        xi = np.linspace(min(obj_princ), max(obj_princ), 50)
-        yi = np.linspace(min(contr1_vals), max(contr1_vals), 50)
-        XI, YI = np.meshgrid(xi, yi)
 
-        ZI = griddata(
-            (obj_princ, contr1_vals), contr2_vals,
-            (XI, YI), method='linear'
-        )
-        surf = ax.plot_surface(XI, YI, ZI, cmap=cm.viridis, edgecolor='none', alpha=0.8)
-    except :
-        eps = 1e-5
-        obj_princ = np.array(obj_princ) + np.random.normal(0, eps, len(obj_princ))
-        contr1_vals = np.array(contr1_vals) + np.random.normal(0, eps, len(contr1_vals))
-        contr2_vals = np.array(contr2_vals) + np.random.normal(0, eps, len(contr2_vals))
-        xi = np.linspace(min(obj_princ), max(obj_princ), 50)
-        yi = np.linspace(min(contr1_vals), max(contr1_vals), 50)
-        XI, YI = np.meshgrid(xi, yi)
+    # Ajouter un petit bruit pour éviter les doublons exacts
+    eps = 1e-6
+    obj_princ_j = obj_princ + np.random.normal(0, eps, len(obj_princ))
+    contr1_j = contr1_vals + np.random.normal(0, eps, len(contr1_vals))
 
-        ZI = griddata(
-            (obj_princ, contr1_vals), contr2_vals,
-            (XI, YI), method='linear'
-        )
-        surf = ax.plot_surface(XI, YI, ZI, cmap=cm.viridis, edgecolor='none', alpha=0.8)
+    # Grille pour la surface
+    xi = np.linspace(min(obj_princ_j), max(obj_princ_j), 50)
+    yi = np.linspace(min(contr1_j), max(contr1_j), 50)
+    XI, YI = np.meshgrid(xi, yi)
 
+    ZI = griddata((obj_princ_j, contr1_j), contr2_vals, (XI, YI), method='linear')
+
+    surf = ax.plot_surface(XI, YI, ZI, cmap=cm.viridis, edgecolor='none', alpha=0.8)
     ax.set_xlabel(objectif)
     ax.set_ylabel(contrainte1)
     ax.set_zlabel(contrainte2)
     ax.set_title(f"Surface de Pareto: {objectif} vs {contrainte1} vs {contrainte2}")
-
     fig.colorbar(surf, ax=ax, shrink=0.5, aspect=5, label=objectif)
     plt.show()
 
@@ -438,7 +422,7 @@ if __name__ == "__main__":
     # # obj_princ = "profit"
     # # contrainte1 = "duree"
     # # contrainte2 = "personne"
-    pareto_points = pareto2(CONFIG, "profit", "personne", "Profit", "Nombre moyen de projets par personne")
+    pareto_points = pareto3(CONFIG, "profit", "duree", "personne")
     # # pareto_points = pareto3(CONFIG, obj_princ, contrainte1, contrainte2)
     # # print(pareto_points)
-    # # pareto_surface_3D(pareto_points, "Profit", "Durée moyenne d'un projet", "Nombre moyen de projets par personne")
+    pareto_surface_3D(pareto_points, "Profit", "Nombre de projets en retard", "Nombre moyen de projets par personne")
